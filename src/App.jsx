@@ -1,121 +1,144 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
+import { useRef, useState, useCallback } from 'react'
 import './App.css'
 
+const KIMI_API_KEY = import.meta.env.VITE_KIMI_API_KEY
+const KIMI_BASE_URL = import.meta.env.VITE_KIMI_BASE_URL || 'https://api.moonshot.ai/v1'
+const KIMI_MODEL = import.meta.env.VITE_KIMI_MODEL || 'moonshot-v1-8k-vision-preview'
+
 function App() {
-  const [count, setCount] = useState(0)
+  const videoRef = useRef(null)
+  const canvasRef = useRef(null)
+  const streamRef = useRef(null)
+
+  const [cameraOn, setCameraOn] = useState(false)
+  const [photo, setPhoto] = useState(null)
+  const [result, setResult] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const startCamera = useCallback(async () => {
+    setError('')
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true })
+      streamRef.current = stream
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+      }
+      setCameraOn(true)
+      setPhoto(null)
+      setResult('')
+    } catch (err) {
+      setError(`Could not access camera: ${err.message}`)
+    }
+  }, [])
+
+  const capturePhoto = useCallback(() => {
+    if (!videoRef.current || !canvasRef.current) return
+    const video = videoRef.current
+    const canvas = canvasRef.current
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    const ctx = canvas.getContext('2d')
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+    setPhoto(canvas.toDataURL('image/jpeg', 0.9))
+    setResult('')
+  }, [])
+
+  const askKimi = useCallback(async () => {
+    if (!photo) return
+    if (!KIMI_API_KEY) {
+      setError('No Kimi API key found. Add VITE_KIMI_API_KEY to your .env file and restart the dev server.')
+      return
+    }
+    setLoading(true)
+    setError('')
+    setResult('')
+    try {
+      const response = await fetch(`${KIMI_BASE_URL}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${KIMI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: KIMI_MODEL,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'image_url', image_url: { url: photo } },
+                { type: 'text', text: 'What is in this picture? Describe it briefly.' },
+              ],
+            },
+          ],
+        }),
+      })
+
+      if (!response.ok) {
+        const text = await response.text()
+        throw new Error(`Kimi API error ${response.status}: ${text}`)
+      }
+
+      const data = await response.json()
+      setResult(data.choices?.[0]?.message?.content ?? 'No answer returned.')
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [photo])
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
+    <div className="app">
+      <h1 className="title">
+        <span className="rabbit-emoji" aria-hidden="true">🐰</span> AI Rabbit Cam
+      </h1>
+
+      <div className="stage">
+        {!photo && (
+          <video ref={videoRef} className="video" autoPlay playsInline muted />
+        )}
+        {photo && <img src={photo} className="video" alt="Captured" />}
+        {!cameraOn && !photo && (
+          <div className="stage-placeholder">Camera is off</div>
+        )}
+      </div>
+
+      <canvas ref={canvasRef} style={{ display: 'none' }} />
+
+      <div className="controls">
+        <button type="button" className="icon-btn" onClick={startCamera} title="Start camera">
+          📷
+        </button>
         <button
           type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
+          className="icon-btn"
+          onClick={capturePhoto}
+          disabled={!cameraOn}
+          title="Capture photo"
         >
-          Count is {count}
+          ⏺️
         </button>
-      </section>
+        <button
+          type="button"
+          className="icon-btn rabbit-btn"
+          onClick={askKimi}
+          disabled={!photo || loading}
+          title="Ask AI Rabbit"
+        >
+          🐰
+        </button>
+      </div>
 
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
+      {loading && <p className="status">Asking the rabbit…</p>}
+      {error && <p className="status error">{error}</p>}
+      {result && (
+        <div className="result">
+          <h2>The rabbit says:</h2>
+          <p>{result}</p>
         </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+      )}
+    </div>
   )
 }
 
